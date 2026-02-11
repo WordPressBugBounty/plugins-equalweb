@@ -3,7 +3,7 @@ Contributors: equalweb
 Donate link: https://www.equalweb.com/
 Tags: accessibility, website accessibility, web accessibility, digital accessibility, WCAG, ada compliance, WooCommerce accessibility, wordpress accessibility, section 508, accessibility GDPR, accessibility assistant, WP accessibility
 Requires at least: 4.7
-Tested up to: 6.2
+Tested up to: 6.8
 Requires PHP: 5.6
 Stable tag: trunk
 License: GNU

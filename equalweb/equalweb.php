@@ -1,220 +1,134 @@
 <?php
 /**
- * Plugin Name: EqualWeb
- * Plugin URI:  https://wordpress.org/plugins/equalweb
- * Description: Equalweb's digital accessibility solution wordpress plugin allowing you to easily implement your accessibility code with your wordpress website.
- * Version:     1.0
- * Author:      Equalweb Accessibility
- * Author URI:  https://www.equalweb.com
- * License:     GPLv2 or later
- * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain: equalweb
- * 
- * This program is free software; you can redistribute it and/or modify it under the terms of the GNU
- * General Public License version 2.
+ * Plugin Name:       EqualWeb Accessibility
+ * Plugin URI:        https://wordpress.org/plugins/equalweb/
+ * Description:       The EqualWeb accessibility widget on your site, with the button designed from WordPress, plus a free PDF accessibility checker and AI remediation for your documents.
+ * Version:           3.0.0
+ * Requires at least: 5.8
+ * Requires PHP:      7.4
+ * Author:            EqualWeb
+ * Author URI:        https://www.equalweb.com/
+ * License:           GPL-2.0-or-later
+ * Text Domain:       equalweb
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+define( 'EQW_PDF_VERSION', '3.0.0' );
+define( 'EQW_PDF_FILE', __FILE__ );
+define( 'EQW_PDF_DIR', plugin_dir_path( __FILE__ ) );
+define( 'EQW_PDF_URL', plugin_dir_url( __FILE__ ) );
+
+/**
+ * Base URL of the EqualWeb free-check proxy (Cloudflare Worker).
+ * Can be overridden with the EQW_PDF_WORKER_URL constant in wp-config.php.
+ */
+if ( ! defined( 'EQW_PDF_WORKER_URL' ) ) {
+	define( 'EQW_PDF_WORKER_URL', 'https://eqw-pdf-plugins-free-check.wcag2worker.workers.dev' );
+}
+
+/**
+ * Platform identifier sent to the shared proxy on registration so it can
+ * report free-check usage per platform. Every port sets its own value; the
+ * proxy defaults a missing value to "wordpress".
+ */
+if ( ! defined( 'EQW_PDF_PLATFORM' ) ) {
+	define( 'EQW_PDF_PLATFORM', 'wordpress' );
+}
+
+/**
+ * The separate "EqualWeb PDF Accessibility" plugin (slug equalweb-pdf-accessibility)
+ * is this plugin's PDF half under its old name. If it is still active, its classes
+ * are already declared and loading ours would be a fatal error; so this plugin
+ * stays dormant and says what to deactivate instead.
+ */
+if ( class_exists( 'EQW_Admin_Page', false ) || class_exists( 'EQWPDF_Registration', false ) ) {
+	add_action( 'admin_notices', function () {
+		if ( ! current_user_can( 'activate_plugins' ) ) {
+			return;
+		}
+		echo '<div class="notice notice-error"><p>'
+			. esc_html__( 'EqualWeb Accessibility includes everything the separate "EqualWeb PDF Accessibility" plugin does. Deactivate EqualWeb PDF Accessibility under Plugins; your settings and documents stay. Until then this plugin stays inactive.', 'equalweb' )
+			. '</p></div>';
+	} );
+	return;
+}
+
+require_once EQW_PDF_DIR . 'includes/class-eqwpdf-registration.php';
+require_once EQW_PDF_DIR . 'includes/class-eqw-api-client.php';
+require_once EQW_PDF_DIR . 'includes/class-eqw-capabilities.php';
+require_once EQW_PDF_DIR . 'includes/class-eqw-classification.php';
+require_once EQW_PDF_DIR . 'includes/class-eqw-file-manager.php';
+require_once EQW_PDF_DIR . 'includes/class-eqw-admin-page.php';
+require_once EQW_PDF_DIR . 'includes/class-eqw-pdf-report.php';
+require_once EQW_PDF_DIR . 'includes/class-eqw-ajax.php';
+require_once EQW_PDF_DIR . 'includes/class-eqw-widget.php';
+
+add_action( 'plugins_loaded', function () {
+	EQW_Capabilities::init();
+	EQW_Admin_Page::init();
+	EQW_Ajax::init();
+	EQW_Widget::init();
+} );
+
+// Deleting an attachment must also remove our sidecar files (remediated
+// cache + backup) so they do not orphan on disk.
+add_action( 'delete_attachment', array( 'EQW_File_Manager', 'on_delete_attachment' ) );
+
+/**
+ * On activation: seed the default role capabilities so admins/editors can use
+ * the plugin immediately.
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
- * even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * Registration for free checks does NOT run here. WordPress fires this hook
+ * before it adds the plugin to active_plugins, so when the check proxy fetches
+ * the verify route below (a separate request) the route does not exist yet and
+ * the attempt can only ever fail with a 404. The site registers from the plugin
+ * page instead: automatically after the page renders, from "Try again", and
+ * before a check (EQW_Ajax::handle_register(), EQW_API_Client::for_check()).
  */
+register_activation_hook( __FILE__, function () {
+	EQW_Capabilities::seed_defaults();
+} );
 
 /**
- * Restrict direct access to the file, for security purpose.
+ * REST route used by the check proxy to verify domain ownership during
+ * registration. Returns the one-time nonce created by register_site().
+ *
+ * Both answers carry no-cache headers: WordPress sends them on REST responses
+ * only to logged-in users, and the proxy's GET is anonymous, so a page cache
+ * or CDN could otherwise serve an old nonce or an old 404. The 404 keeps the
+ * code eqw_no_pending_registration, which the proxy recognises as "the plugin
+ * answered, but the one-time code was not there" (a cache or a multi-server
+ * setup) rather than "the address does not exist".
  */
-defined('ABSPATH') or die('You can not access it directly');
-
-if( !class_exists('EqualWeb_Plugin') )  {
-
-/**
- * Defining class for the plugin
- * for better code structure using OOP
- */
-class EqualWeb_Plugin {
-
-    // Defining language domain for translation
-	const DOMAIN	= 'equalweb';
-
-	// Defining some values to be used inside plugin code
-	public static $config = [
-								'group'		=> 'equalweb-accessibility',
-								'title'		=> 'EqualWeb',
-								'page'		=> 'equalweb',
-								'pagelink'	=> 'options-general.php?page=equalweb',
-								'prefix'	=> 'equalweb',
-							];
-							
-	// Defining plugin setting fields with their default values
-	public static $settings	= [
-                                'enable'    => 0,
-                                'code'      => '',
-							  ];
-
-    // Class constructor which attaches plugins functions and do other initiating tasks
-	public function __construct() {
-		
-        // Back-end Hooks
-		register_activation_hook(__FILE__, [$this, 'activate']);
-		add_filter('plugin_action_links_'.plugin_basename(__FILE__), [$this, 'settings_link']);
-		add_action('admin_init', [$this, 'register_settings']);
-        add_action('admin_init', [$this, 'redirect']);
-		add_action('admin_menu', [$this, 'admin_menu']);
-		add_action('admin_enqueue_scripts', [$this, 'admin_css']);
-
-		// Front-end Hooks
-		add_action('wp_footer', [$this, 'code']);
-
-	}
-
-	/**
-	 * Function to be called when plugin
-	 * is activated to save option for redirection
-	 **/
-	function activate() {
-        extract( static::$config );
-		add_option($prefix.'_activation_redirect', true);
-	}
-
-    /**
-	 * Redirect to plugin settings page
-	 * when plugin is activated
-	 **/
-	function redirect() {
-        extract( static::$config );
-		if (get_option($prefix.'_activation_redirect', false)) {
-			delete_option($prefix.'_activation_redirect');
-			wp_redirect($pagelink);
-			exit;
-		}
-	}
-	
-	/**
-	 * Adds plugin settings link to plugins admin page
-	 */
-	function settings_link( $links ) { 
-		extract( static::$config );
-		$new = '<a href="'.$pagelink.'">Settings</a>';
-		array_unshift($links, $new); 
-		return $links;
-	}
-
-	/**
-	 * To get plugin setting field values
-	 */
-	function options() {
-		extract( static::$config );
-		$options = [];
-		foreach( static::$settings as $field => $default ) {
-			$options[$field] = get_option( $prefix.'_'.$field, $default );
-		}
-		return $options;
-	}
-
-	/**
-	 * Registers plugin settings fields
-	 */
-	function register_settings() {
-		extract( static::$config );
-		foreach( static::$settings as $field => $default ) {
-			register_setting( $group, $prefix.'_'.$field );
-		}
-	}
-	
-	/**
-	 * Adds a new menu item for
-	 * plugin settings page in WP admin menu
-	 * as a child of Settings menu
-	 */
-	function admin_menu() {
-		extract(static::$config);
-		add_options_page($title, $title, 'administrator', $page, [$this, 'admin_settings']);
-	}
-	
-	/**
-	 * Displays the content of plugin settings page in WordPress admin
-	 */
-	function admin_settings() {
-		extract( static::$config );
-		extract( $this->options() );
-		?>
-		<div class="equalweb-settings wrap <?php echo $prefix ?>-settings">
-			<div class="<?php echo $prefix ?>-settings-inner">
-				<div class="left-side"> 
-					<div class="top-logo">
-						<img src="<?php echo plugins_url('assets/img/wp-plugin-logo.png', __FILE__ ); ?>" class="big">
-						<img src="<?php echo plugins_url('assets/img/wp-plugin-logo-small.png', __FILE__ ); ?>" class="small">
-					</div>
-					<div class="main-text-wrap">
-						<h1>Equalweb is an AI-powered solution (SaaS) and online remediation widget, created to improve accessibility and monitoring of any website</h1>
-						<h2>Installation</h2>
-						<p class="text-2">Just insert one line of code and we will do the rest!</p>
-						<h3>Please make sure you create an account on equalweb.com and register your website domain.<br> Otherwise the plugin will not function.</h3>
-						<ul>
-							<li><img src="<?php echo plugins_url('assets/img/wp-plugin-step-1.png', __FILE__ ); ?>"> Create an account on <a href="https://login.equalweb.com/?page=registration&ref=1489&a_aid=114411&platform=wordpress" target="_blank">login.equalweb.com</a> <br />and register your website domain</li>
-							<li><img src="<?php echo plugins_url('assets/img/wp-plugin-step-2.png', __FILE__ ); ?>"> Copy-paste EqualWeb accessibility <br />code in your website code</li>
-							<li><img src="<?php echo plugins_url('assets/img/wp-plugin-step-3.png', __FILE__ ); ?>"> Click Save<br /> And you are all set!</li>
-						</ul>
-						<img src="<?php echo plugins_url('assets/img/wp-plugin-arrow-down_anim.gif', __FILE__ ); ?>" class="equal-arrow">
-					</div>
-					<form method="post" action="options.php">
-						<?php settings_fields( $group ); ?>
-						<?php do_settings_sections( $group ); ?>
-						<div class="accessibility-js-code">
-							<div class="title-div"><img src="<?php echo plugins_url('assets/img/wp-plugin-js-code.png', __FILE__ ); ?>"> Accessibility JS Code</div>
-							<textarea name="<?php echo $prefix; ?>_code" rows="6" placeholder="Paste your accessibility code here"><?php echo $code; ?></textarea>
-						</div>
-						<div class="accessibility-activate">
-							<div class="title-div">Activate</div>
-							<label>
-								<select class="<?php echo $prefix; ?>_enable" name="<?php echo $prefix; ?>_enable">
-									<option value="1" <?php selected( $enable, 1); ?>>Enable</option>
-									<option value="0" <?php selected( $enable, 0); ?>>Disable</option>
-								</select>
-							</label>
-							<div class="submit-wrap">
-								<?php submit_button(); ?>
-							</div>
-						</div>
-					</form>
-				</div>
-				<div class="right-side">
-					<div class="top-banner"><img src="<?php echo plugins_url('assets/img/wp-plugin-banner.jpg', __FILE__ ); ?>"></div>
-					<p><img src="<?php echo plugins_url('assets/img/wp-plugin-security-icon.png', __FILE__ ); ?>">Our widget is fully protected from security threats. We do not extract any data from your website or make any changes to it whatsoever.</p>
-					<?php if (!$enable) { ?>
-						<div class="movie-wrap">
-							<h2>Installation Video Guide</h2>
-							<video src="<?php echo plugins_url('assets/video/vid.mp4', __FILE__ ); ?>" autoplay controls></video>
-						</div>
-					<?php } ?>
-				</div>
-			</div>
-		</div>
-		<?php		
-	}
-	
-	/**
-	 * Hooks into footer
-     * To add accessibility code provided by EqualWeb
-	 */
-	function code() {
-		extract( static::$config );
-        extract( $this->options() );
-        if ($enable) {
-            echo $code;
-        }
-	}
-	
-	/**
-	 * Includes plugin CSS file in WP admin
-	 */
-	function admin_css() {
-		$screen = get_current_screen();
-        if ( $screen->id == 'settings_page_equalweb' ) {
-			wp_enqueue_style('equalweb', plugins_url('assets/css/style.css', __FILE__ ));
-		}
-	}
-
-}
-
-}
-
-// Initialize the class object
-$equalweb = new EqualWeb_Plugin();
+add_action( 'rest_api_init', function () {
+	register_rest_route( 'eqw/v1', '/verify', array(
+		'methods'             => 'GET',
+		// Public by design: the proxy has no credentials for this site, and the
+		// nonce is a random one-time value that exists only while registering.
+		'permission_callback' => '__return_true',
+		'callback'            => function () {
+			$nonce = get_transient( EQWPDF_Registration::TRANSIENT_NONCE );
+			if ( $nonce ) {
+				$response = new WP_REST_Response( array( 'nonce' => $nonce ), 200 );
+			} else {
+				$response = new WP_REST_Response( array(
+					'code'    => 'eqw_no_pending_registration',
+					'message' => 'No registration is pending. EqualWeb uses this address to verify the site; if you can see this message, the address is reachable.',
+					'data'    => array( 'status' => 404 ),
+				), 404 );
+			}
+			foreach ( wp_get_nocache_headers() as $name => $value ) {
+				// A false value (Last-Modified) means "send none", not a header.
+				if ( empty( $value ) ) {
+					continue;
+				}
+				$response->header( $name, $value );
+			}
+			$response->header( 'X-LiteSpeed-Cache-Control', 'no-cache' );
+			return $response;
+		},
+	) );
+} );

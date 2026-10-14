@@ -153,6 +153,9 @@ class EQW_Admin_Page {
 				'widgetCheckPartial'  => __( 'Only part of the widget was found on your site (a cache or another plugin may be in the way).', 'equalweb' ),
 				'widgetCheckMissing'  => __( 'The widget was not found on your site. A page cache may still serve old pages; purge it and check again.', 'equalweb' ),
 				'widgetCheckError'    => __( 'Your site could not be fetched.', 'equalweb' ),
+				'widgetCheckDup'      => __( 'The widget loads more than once on your site. The code is probably also pasted in your theme or another plugin; remove it there so only this plugin installs it.', 'equalweb' ),
+				'widgetCheckStillOn'  => __( 'The widget was removed here, but your site still shows it: purge your page cache, and check your theme or other plugins for a copy of the code.', 'equalweb' ),
+				'widgetCheckGone'     => __( 'The widget is not on your site.', 'equalweb' ),
 				'checking'        => __( 'Checking…', 'equalweb' ),
 				'remediating'     => __( 'Remediating…', 'equalweb' ),
 				'error'           => __( 'Error', 'equalweb' ),
@@ -1545,6 +1548,11 @@ class EQW_Admin_Page {
 	 * @return string HTML, built from escaped parts.
 	 */
 	public static function render_offer( $variant = 'banner' ) {
+		// The offer is for the first credits: once an API key is saved the
+		// customer has an account, so no banner anywhere (nir, 2026-10-14).
+		if ( '' !== (string) get_option( EQW_API_Client::OPT_API_KEY, '' ) ) {
+			return '';
+		}
 		$settings_url = admin_url( 'admin.php?page=' . self::SLUG . '&tab=settings' );
 		$copy_button  = '<button type="button" class="button eqw-promo-copy" data-code="' . esc_attr( self::OFFER_CODE ) . '"'
 			. ' data-copied="' . esc_attr__( 'Code copied.', 'equalweb' ) . '"'

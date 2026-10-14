@@ -39,9 +39,16 @@ class EQW_Widget {
 	const LEGACY_ENABLE   = 'equalweb_enable';
 	const LEGACY_REDIRECT = 'equalweb_activation_redirect';
 
-	/** The only hosts the core may be loaded from. */
+	/** The default domains (EqualWeb), used when the code names none. */
 	const CDN = 'https://cdn.equalweb.com/';
 	const ACC = 'https://access.equalweb.com/';
+
+	/**
+	 * The brands the widget is sold under, by base domain: the code's js/acc
+	 * domains must be one of these or a subdomain of one. EqualWeb, and Nagich
+	 * (nagich.co.il; Enterprise on nagich.com), whose CDN serves the same core.
+	 */
+	const BRAND_DOMAINS = array( 'equalweb.com', 'nagich.co.il', 'nagich.com' );
 
 	/**
 	 * Button shapes: the four the EqualWeb portal's designer offers (circle, square,
@@ -99,6 +106,8 @@ class EQW_Widget {
 			// snippet is output as-is until a fresh code is pasted.
 			'mode'           => 'config',
 			'sitekey'        => '',
+			'cdn'            => self::CDN,   // domains.js from the code (EqualWeb or Nagich).
+			'acc'            => self::ACC,   // domains.acc from the code.
 			'core_version'   => '',
 			'integrity'      => '',
 			'cfasync'        => true,
@@ -123,6 +132,7 @@ class EQW_Widget {
 			'raw_snippet'    => '',
 			'legacy_raw'     => '',
 			'imported_v1'    => false,
+			'domains_v'      => 0,           // 1 = stored settings re-read for the brand domains (3.0.1).
 			'saved_at'       => 0,
 			'last_check'     => array(),
 		);
@@ -171,15 +181,31 @@ class EQW_Widget {
 		}
 		$out = array( 'sitekey' => strtolower( $m[1] ) );
 
-		// The core may only come from EqualWeb's CDN. A code that points elsewhere
-		// would make this plugin load an arbitrary script on the site: refused.
-		if ( preg_match( '/["\']js["\']\s*:\s*["\']([^"\']+)["\']/', $text, $m ) ) {
-			$js = $m[1];
-			if ( ! preg_match( '#^https://[a-z0-9.-]+\.equalweb\.com/$#i', $js ) ) {
-				return new WP_Error( 'bad_domain', __( 'The code loads its script from an address that is not EqualWeb. Only code from your EqualWeb account can be used.', 'equalweb' ) );
+		// The core may only come from a brand's CDN (BRAND_DOMAINS). A code that
+		// points elsewhere would make this plugin load an arbitrary script on the
+		// site: refused. Both domains are kept as the code names them, so a Nagich
+		// site keeps loading from Nagich.
+		$found = array();
+		foreach ( array( 'js', 'acc' ) as $key ) {
+			if ( preg_match( '/["\']' . $key . '["\']\s*:\s*["\']([^"\']+)["\']/', $text, $m ) ) {
+				$found[ $key ] = self::brand_url( $m[1] );
+				if ( '' === $found[ $key ] ) {
+					return new WP_Error( 'bad_domain', __( 'The code loads its script from an address that is not EqualWeb or Nagich. Only the code from your EqualWeb or Nagich account can be used.', 'equalweb' ) );
+				}
 			}
-			$out['cdn'] = $js;
 		}
+		// Older codes write the loader's full address instead of domains.js.
+		if ( preg_match( '#(https?:)?//([a-z0-9.-]+)/core/\d#i', $text, $m ) ) {
+			$src = self::brand_url( $m[2] );
+			if ( '' === $src ) {
+				return new WP_Error( 'bad_domain', __( 'The code loads its script from an address that is not EqualWeb or Nagich. Only the code from your EqualWeb or Nagich account can be used.', 'equalweb' ) );
+			}
+			if ( ! isset( $found['js'] ) ) {
+				$found['js'] = $src;
+			}
+		}
+		$out['cdn'] = isset( $found['js'] ) ? $found['js'] : self::CDN;
+		$out['acc'] = isset( $found['acc'] ) ? $found['acc'] : self::sibling_acc( $out['cdn'] );
 		if ( preg_match( '#core/(\d+(?:\.\d+){1,3})/accessibility\.js#', $text, $m ) ) {
 			$out['core_version'] = $m[1];
 		} else {
@@ -266,6 +292,36 @@ class EQW_Widget {
 	 * Finds the balanced closing brace (strings aware), then tolerates the
 	 * trailing commas the portal emits.
 	 */
+	/**
+	 * A js/acc domain from the code as `https://host/`, or '' when the host is
+	 * not one of BRAND_DOMAINS (or a subdomain of one). Takes the portal's form
+	 * (https://cdn.equalweb.com/) and the bare form (cdn.nagich.co.il).
+	 */
+	public static function brand_url( $v ) {
+		$v = trim( (string) $v );
+		if ( ! preg_match( '#^(?:https?:)?(?://)?([a-z0-9.-]+)/?$#i', $v, $m ) ) {
+			return '';
+		}
+		$host = strtolower( rtrim( $m[1], '.' ) );
+		foreach ( self::BRAND_DOMAINS as $base ) {
+			if ( $host === $base || substr( $host, -strlen( '.' . $base ) ) === '.' . $base ) {
+				return 'https://' . $host . '/';
+			}
+		}
+		return '';
+	}
+
+	/** The access domain of the same brand as a CDN (cdn.X -> access.X). */
+	private static function sibling_acc( $cdn ) {
+		$host = (string) wp_parse_url( $cdn, PHP_URL_HOST );
+		foreach ( self::BRAND_DOMAINS as $base ) {
+			if ( $host === $base || substr( $host, -strlen( '.' . $base ) ) === '.' . $base ) {
+				return 'https://access.' . $base . '/';
+			}
+		}
+		return self::ACC;
+	}
+
 	private static function extract_object( $text, $key ) {
 		if ( ! preg_match( '/["\']' . preg_quote( $key, '/' ) . '["\']\s*:\s*\{/', $text, $m, PREG_OFFSET_CAPTURE ) ) {
 			return null;
@@ -347,6 +403,8 @@ class EQW_Widget {
 		$out['enabled']        = self::bool( isset( $s['enabled'] ) ? $s['enabled'] : false );
 		$out['mode']           = ( isset( $s['mode'] ) && 'legacy' === $s['mode'] ) ? 'legacy' : 'config';
 		$out['sitekey']        = ( isset( $s['sitekey'] ) && preg_match( '/^[a-f0-9]{32}$/i', (string) $s['sitekey'] ) ) ? strtolower( $s['sitekey'] ) : '';
+		$out['cdn']            = isset( $s['cdn'] ) && '' !== self::brand_url( $s['cdn'] ) ? self::brand_url( $s['cdn'] ) : self::CDN;
+		$out['acc']            = isset( $s['acc'] ) && '' !== self::brand_url( $s['acc'] ) ? self::brand_url( $s['acc'] ) : self::sibling_acc( $out['cdn'] );
 		$out['core_version']   = ( isset( $s['core_version'] ) && preg_match( '/^\d+(\.\d+){1,3}$/', (string) $s['core_version'] ) ) ? (string) $s['core_version'] : '';
 		$out['integrity']      = ( isset( $s['integrity'] ) && preg_match( '/^sha(256|384|512)-[A-Za-z0-9+\/=]{40,120}$/', (string) $s['integrity'] ) ) ? (string) $s['integrity'] : '';
 		$out['cfasync']        = self::bool( isset( $s['cfasync'] ) ? $s['cfasync'] : true );
@@ -386,6 +444,7 @@ class EQW_Widget {
 		$out['raw_snippet'] = isset( $s['raw_snippet'] ) ? (string) $s['raw_snippet'] : '';
 		$out['legacy_raw']  = isset( $s['legacy_raw'] ) ? (string) $s['legacy_raw'] : '';
 		$out['imported_v1'] = self::bool( isset( $s['imported_v1'] ) ? $s['imported_v1'] : false );
+		$out['domains_v']   = isset( $s['domains_v'] ) ? (int) $s['domains_v'] : 0;
 		$out['saved_at']    = isset( $s['saved_at'] ) ? (int) $s['saved_at'] : 0;
 		$out['last_check']  = isset( $s['last_check'] ) && is_array( $s['last_check'] ) ? $s['last_check'] : array();
 		if ( 'legacy' === $out['mode'] && '' === $out['legacy_raw'] ) {
@@ -418,7 +477,10 @@ class EQW_Widget {
 		}
 		$c = array(
 			'sitekey' => $s['sitekey'],
-			'domains' => array( 'js' => self::CDN, 'acc' => self::ACC ),
+			'domains' => array(
+				'js'  => ! empty( $s['cdn'] ) ? $s['cdn'] : self::CDN,
+				'acc' => ! empty( $s['acc'] ) ? $s['acc'] : self::ACC,
+			),
 		);
 		if ( '' !== $s['position'] ) {
 			$c['Position'] = $s['position'];
@@ -468,7 +530,7 @@ class EQW_Widget {
 		if ( null === $s ) {
 			$s = self::get();
 		}
-		return self::CDN . 'core/' . $s['core_version'] . '/accessibility.js';
+		return ( ! empty( $s['cdn'] ) ? $s['cdn'] : self::CDN ) . 'core/' . $s['core_version'] . '/accessibility.js';
 	}
 
 	/** Whether the widget goes out on this request. */
@@ -554,6 +616,185 @@ class EQW_Widget {
 	}
 
 	/* ------------------------------------------------------------------ */
+	/* Core updates through the EqualWeb API (needs the account's API key)  */
+	/* ------------------------------------------------------------------ */
+
+	/**
+	 * The EqualWeb API hands out the current installation code of a site the
+	 * key's account owns: GET /widget/code/{siteKey}?format=json, header
+	 * x-a11y-api-key (the same key as PDF remediation, Settings tab). With it
+	 * the plugin can follow new core versions without a code being pasted
+	 * again (nir, 2026-10-14). The API is EqualWeb's only, so this covers codes
+	 * on EqualWeb's domains; a Nagich code is updated by pasting it again.
+	 *
+	 * An update takes from the fresh code only what pins the core: version,
+	 * integrity hash and domains. The button design made here is kept.
+	 */
+	const API_CODE_URL     = 'https://login.equalweb.com/api/v2/widget/code/';
+	const UPDATE_TRANSIENT = 'eqw_widget_update';
+	const UPDATE_TTL       = 43200;   // 12 h between checks when the tab is opened.
+
+	/** Whether the code is on EqualWeb's own domains (the API covers only those). */
+	public static function is_equalweb( array $s ) {
+		$host = (string) wp_parse_url( isset( $s['cdn'] ) ? (string) $s['cdn'] : '', PHP_URL_HOST );
+		return 'legacy' !== $s['mode'] && '' !== $s['sitekey'] && '' !== $s['core_version']
+			&& ( 'equalweb.com' === $host || '.equalweb.com' === substr( $host, -13 ) );
+	}
+
+	/** The account's API key (Settings tab), or ''. */
+	public static function api_key() {
+		return class_exists( 'EQW_API_Client' ) ? (string) EQW_API_Client::get_personal_key() : '';
+	}
+
+	/**
+	 * The latest installation code for this site from the EqualWeb API, parsed.
+	 *
+	 * @return array|WP_Error parse_snippet() values, or an error code:
+	 *                        no_key, not_found (the key's account does not own
+	 *                        this site key), bad_key, http, bad_response.
+	 */
+	public static function fetch_latest( array $s ) {
+		$key = self::api_key();
+		if ( '' === $key ) {
+			return new WP_Error( 'no_key', '' );
+		}
+		$res = wp_remote_get( self::API_CODE_URL . rawurlencode( $s['sitekey'] ) . '?format=json', array(
+			'timeout' => 10,
+			'headers' => array( 'x-a11y-api-key' => $key, 'Accept' => 'application/json' ),
+		) );
+		if ( is_wp_error( $res ) ) {
+			return new WP_Error( 'http', $res->get_error_message() );
+		}
+		$code = (int) wp_remote_retrieve_response_code( $res );
+		if ( 404 === $code ) {
+			return new WP_Error( 'not_found', '' );
+		}
+		// The API answers a wrong key with 400 {"error":"Bad API key"} (seen
+		// 2026-10-14; the docs list 403), a missing one with 401, a locked one with 423.
+		$err = json_decode( (string) wp_remote_retrieve_body( $res ), true );
+		$err = is_array( $err ) && isset( $err['error'] ) && is_string( $err['error'] ) ? $err['error'] : '';
+		if ( 401 === $code || 403 === $code || 423 === $code || ( 400 === $code && false !== stripos( $err, 'api key' ) ) ) {
+			return new WP_Error( 'bad_key', 'HTTP ' . $code );
+		}
+		if ( 200 !== $code ) {
+			return new WP_Error( 'http', 'HTTP ' . $code );
+		}
+		$body = json_decode( (string) wp_remote_retrieve_body( $res ), true );
+		if ( ! is_array( $body ) || empty( $body['code'] ) || ! is_string( $body['code'] ) ) {
+			return new WP_Error( 'bad_response', '' );
+		}
+		$parsed = self::parse_snippet( $body['code'] );
+		// The same brand allow-list as a pasted code, and it must be THIS site.
+		if ( is_wp_error( $parsed ) || $parsed['sitekey'] !== $s['sitekey'] || ! self::is_equalweb( array_merge( $s, $parsed ) ) ) {
+			return new WP_Error( 'bad_response', is_wp_error( $parsed ) ? $parsed->get_error_code() : 'sitekey' );
+		}
+		return $parsed;
+	}
+
+	/**
+	 * Is a newer core available? Cached per site key + version, so opening the
+	 * tab does not call the API every time.
+	 *
+	 * @return array { status: current|available|no_key|not_equalweb|error, latest, detail, at }
+	 */
+	public static function update_status( array $s, $force = false ) {
+		if ( ! self::is_equalweb( $s ) ) {
+			return array( 'status' => 'not_equalweb', 'latest' => '', 'detail' => '', 'at' => 0 );
+		}
+		if ( '' === self::api_key() ) {
+			return array( 'status' => 'no_key', 'latest' => '', 'detail' => '', 'at' => 0 );
+		}
+		$tag    = $s['sitekey'] . '|' . $s['core_version'];
+		$cached = get_transient( self::UPDATE_TRANSIENT );
+		if ( ! $force && is_array( $cached ) && isset( $cached['tag'] ) && $tag === $cached['tag'] ) {
+			return $cached;
+		}
+		$latest = self::fetch_latest( $s );
+		if ( is_wp_error( $latest ) ) {
+			$out = array( 'status' => 'error', 'latest' => '', 'detail' => $latest->get_error_code(), 'at' => time() );
+		} else {
+			$newer = version_compare( $latest['core_version'], $s['core_version'], '>' );
+			$out   = array( 'status' => $newer ? 'available' : 'current', 'latest' => $latest['core_version'], 'detail' => '', 'at' => time() );
+		}
+		$out['tag'] = $tag;
+		// Errors are retried sooner (an hour), a result is kept for 12 h.
+		set_transient( self::UPDATE_TRANSIENT, $out, 'error' === $out['status'] ? 3600 : self::UPDATE_TTL );
+		return $out;
+	}
+
+	/** The settings with the core of a fresh code: version, hash, domains; the design is kept. */
+	public static function with_core( array $s, array $latest ) {
+		foreach ( array( 'core_version', 'integrity', 'cfasync', 'cdn', 'acc', 'for_domain' ) as $k ) {
+			if ( isset( $latest[ $k ] ) ) {
+				$s[ $k ] = $latest[ $k ];
+			}
+		}
+		$s['raw_snippet'] = $latest['raw_snippet'];
+		$s['last_check']  = array();
+		return $s;
+	}
+
+	/**
+	 * Fetch and apply the latest core now: the tab's "Update now". Never
+	 * downgrades. Deliberately never automatic (nir, 2026-10-14): the admin
+	 * decides when the live widget changes.
+	 *
+	 * @return string|WP_Error The version now in use.
+	 */
+	public static function update_core() {
+		$s = self::get();
+		if ( ! self::is_equalweb( $s ) ) {
+			return new WP_Error( 'not_equalweb', '' );
+		}
+		$latest = self::fetch_latest( $s );
+		if ( is_wp_error( $latest ) ) {
+			return $latest;
+		}
+		if ( version_compare( $latest['core_version'], $s['core_version'], '>' ) ) {
+			$s = self::with_core( $s, $latest );
+			self::save( $s );
+		}
+		delete_transient( self::UPDATE_TRANSIENT );
+		return $s['core_version'];
+	}
+
+	/** The status-card line for updates (escaped parts). */
+	private static function update_row( array $s ) {
+		$u = self::update_status( $s );
+		if ( 'not_equalweb' === $u['status'] ) {
+			return '';
+		}
+		if ( 'no_key' === $u['status'] ) {
+			$url = admin_url( 'admin.php?page=' . EQW_Admin_Page::SLUG . '&tab=settings' );
+			return self::status_row( __( 'Updates', 'equalweb' ), esc_html__( 'Add your EqualWeb API key to check for new widget versions and update from here.', 'equalweb' )
+				. ' <a href="' . esc_url( $url ) . '">' . esc_html__( 'Add your API key', 'equalweb' ) . '</a>' );
+		}
+		$form = function ( $label, $primary, $name ) {
+			return '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" class="eqw-wupdate">'
+				. '<input type="hidden" name="action" value="' . esc_attr( self::ACTION_SAVE ) . '">'
+				. '<input type="hidden" name="eqw_form" value="' . esc_attr( $name ) . '">'
+				. wp_nonce_field( self::NONCE_SAVE, '_wpnonce', true, false )
+				. '<button type="submit" class="button' . ( $primary ? ' button-primary' : '' ) . '">' . esc_html( $label ) . '</button></form>';
+		};
+		if ( 'available' === $u['status'] ) {
+			/* translators: %s: core version number */
+			$text = '<span class="eqw-badge eqw-warn">' . esc_html( sprintf( __( 'Version %s is available', 'equalweb' ), $u['latest'] ) ) . '</span> ';
+			return self::status_row( __( 'Updates', 'equalweb' ), $text . $form( __( 'Update now', 'equalweb' ), true, 'update' ) );
+		}
+		if ( 'current' === $u['status'] ) {
+			return self::status_row( __( 'Updates', 'equalweb' ), '<span class="eqw-badge eqw-ok">' . esc_html__( 'Up to date', 'equalweb' ) . '</span> ' . $form( __( 'Check again', 'equalweb' ), false, 'update_check' ) );
+		}
+		$why = array(
+			'not_found'    => __( 'Your API key belongs to an EqualWeb account that does not own this site key.', 'equalweb' ),
+			'bad_key'      => __( 'EqualWeb did not accept your API key. Check it in Settings.', 'equalweb' ),
+			'http'         => __( 'EqualWeb could not be reached; it will be tried again later.', 'equalweb' ),
+			'bad_response' => __( 'EqualWeb sent a code this plugin could not use.', 'equalweb' ),
+		);
+		$msg = isset( $why[ $u['detail'] ] ) ? $why[ $u['detail'] ] : $why['http'];
+		return self::status_row( __( 'Updates', 'equalweb' ), '<span class="eqw-badge eqw-warn">' . esc_html( $msg ) . '</span> ' . $form( __( 'Check again', 'equalweb' ), false, 'update_check' ) );
+	}
+
+	/* ------------------------------------------------------------------ */
 	/* The 1.0 plugin: import and the old page                             */
 	/* ------------------------------------------------------------------ */
 
@@ -564,7 +805,11 @@ class EQW_Widget {
 	 * defaults so this runs once.
 	 */
 	public static function maybe_migrate() {
-		if ( false !== get_option( self::OPTION ) ) {
+		$stored = get_option( self::OPTION );
+		if ( false !== $stored ) {
+			if ( is_array( $stored ) && empty( $stored['domains_v'] ) ) {
+				self::repair_domains();
+			}
 			return;
 		}
 		$s      = self::defaults();
@@ -583,7 +828,37 @@ class EQW_Widget {
 			$s['enabled']     = (bool) get_option( self::LEGACY_ENABLE, 0 );
 			$s['imported_v1'] = true;
 		}
+		$s['domains_v'] = 1;
 		delete_option( self::LEGACY_REDIRECT );
+		self::save( $s );
+	}
+
+	/**
+	 * Once, for settings saved by 3.0.0, which knew only EqualWeb's domains:
+	 *  - a Nagich code imported from 1.0 was refused by the parser and sits in
+	 *    legacy mode; it is parsed now (the design comes from the code, as on
+	 *    a first import);
+	 *  - a parsed code had its domains replaced by EqualWeb's; they are read
+	 *    again from the stored code. Nothing else (the design) changes.
+	 */
+	public static function repair_domains() {
+		$s = self::get();
+		if ( 'legacy' === $s['mode'] && '' !== $s['legacy_raw'] ) {
+			$parsed = self::parse_snippet( $s['legacy_raw'] );
+			if ( ! is_wp_error( $parsed ) ) {
+				$s         = array_merge( $s, $parsed );
+				$s['btn']  = isset( $parsed['btn'] ) ? array_merge( self::defaults()['btn'], $parsed['btn'] ) : self::defaults()['btn'];
+				$s['mode'] = 'config';
+				$s['legacy_raw'] = '';
+			}
+		} elseif ( '' !== $s['raw_snippet'] ) {
+			$parsed = self::parse_snippet( $s['raw_snippet'] );
+			if ( ! is_wp_error( $parsed ) ) {
+				$s['cdn'] = $parsed['cdn'];
+				$s['acc'] = $parsed['acc'];
+			}
+		}
+		$s['domains_v'] = 1;
 		self::save( $s );
 	}
 
@@ -689,6 +964,16 @@ class EQW_Widget {
 			wp_safe_redirect( self::tab_url( array( 'eqw_saved' => $s['enabled'] ? 'on' : 'off' ) ) );
 			exit;
 		}
+		if ( 'update' === $form ) {
+			$r = self::update_core();
+			wp_safe_redirect( self::tab_url( is_wp_error( $r ) ? array( 'eqw_error' => 'upd_' . $r->get_error_code() ) : array( 'eqw_saved' => 'updated' ) ) );
+			exit;
+		}
+		if ( 'update_check' === $form ) {
+			self::update_status( $s, true );
+			wp_safe_redirect( self::tab_url() );
+			exit;
+		}
 		if ( 'options' === $form ) {
 			$s['show_to_admins'] = ! empty( $_POST['eqw_show_to_admins'] );
 			$s['hide_btn']       = ! empty( $_POST['eqw_hide_btn'] );
@@ -713,7 +998,10 @@ class EQW_Widget {
 
 	/**
 	 * "Check on your site": fetch the front page as a visitor and look for the
-	 * site key and the core script. Answers ok / partial / missing / error.
+	 * site key and the core script. Answers ok / partial / missing / error, or
+	 * duplicate (the core loads twice: the code is also in the theme or another
+	 * plugin); with the widget off, gone / still_on (a page cache or a copy of
+	 * the code elsewhere keeps it on the site).
 	 */
 	public static function handle_check() {
 		if ( ! current_user_can( 'manage_options' ) ) {
@@ -742,6 +1030,14 @@ class EQW_Widget {
 		$body = (string) wp_remote_retrieve_body( $res );
 		if ( $code < 200 || $code >= 400 ) {
 			return array( 'at' => $now, 'status' => 'error', 'detail' => 'HTTP ' . $code );
+		}
+		// Every EqualWeb/Nagich loader names the core file; more than one is a double install.
+		$cores = preg_match_all( '#/core/[0-9.]+/accessibility\.js#', $body );
+		if ( empty( $s['enabled'] ) ) {
+			return array( 'at' => $now, 'status' => ( $cores > 0 || false !== stripos( $body, 'window.interdeal' ) ) ? 'still_on' : 'gone', 'detail' => '' );
+		}
+		if ( $cores > 1 ) {
+			return array( 'at' => $now, 'status' => 'duplicate', 'detail' => (string) $cores );
 		}
 		$has_key  = '' !== $s['sitekey'] && false !== stripos( $body, $s['sitekey'] );
 		$has_core = false !== strpos( $body, 'core/' . $s['core_version'] . '/accessibility.js' );
@@ -782,12 +1078,19 @@ class EQW_Widget {
 			'empty'      => __( 'Paste the installation code from your EqualWeb account.', 'equalweb' ),
 			'no_sitekey' => __( 'This does not look like an EqualWeb installation code: no site key was found. Copy the whole code from your EqualWeb account.', 'equalweb' ),
 			'no_core'    => __( 'The code does not say which EqualWeb core version to load. Copy the whole code, including the part below the settings.', 'equalweb' ),
-			'bad_domain' => __( 'The code loads its script from an address that is not EqualWeb. Only code from your EqualWeb account can be used.', 'equalweb' ),
+			'upd_no_key'       => __( 'Add your EqualWeb API key in Settings to update the widget from here.', 'equalweb' ),
+			'upd_not_found'    => __( 'Your API key belongs to an EqualWeb account that does not own this site key.', 'equalweb' ),
+			'upd_bad_key'      => __( 'EqualWeb did not accept your API key. Check it in Settings.', 'equalweb' ),
+			'upd_http'         => __( 'EqualWeb could not be reached. Try again in a few minutes.', 'equalweb' ),
+			'upd_bad_response' => __( 'EqualWeb sent a code this plugin could not use. Paste the installation code from your account instead.', 'equalweb' ),
+			'upd_not_equalweb' => __( 'Updates from here work for codes from an EqualWeb account. Paste the new code from your account instead.', 'equalweb' ),
+			'bad_domain' => __( 'The code loads its script from an address that is not EqualWeb or Nagich. Only the code from your EqualWeb or Nagich account can be used.', 'equalweb' ),
 		);
 		$saved_msgs = array(
 			'code'    => __( 'The installation code was saved and the widget is on.', 'equalweb' ),
 			'design'  => __( 'The button design was saved.', 'equalweb' ),
 			'options' => __( 'The options were saved.', 'equalweb' ),
+			'updated' => __( 'The widget now uses the latest version from EqualWeb. Your design is kept.', 'equalweb' ),
 			'reset'   => __( 'The design was reset to the code from your EqualWeb account.', 'equalweb' ),
 			'on'      => __( 'The widget is now on your site.', 'equalweb' ),
 			'off'     => __( 'The widget was removed from your site. Your code and design are kept.', 'equalweb' ),
@@ -798,7 +1101,7 @@ class EQW_Widget {
 		$b          = $s['btn'];
 		$icon_is_text = ! is_int( $b['icon_type'] );
 		?>
-		<div class="eqw-widget" data-eqw-cdn="<?php echo esc_attr( self::CDN ); ?>" data-eqw-core="<?php echo esc_attr( $configured ? self::core_url( $s ) : '' ); ?>" data-eqw-integrity="<?php echo esc_attr( $s['integrity'] ); ?>" data-eqw-sitekey="<?php echo esc_attr( $configured ? $s['sitekey'] : '' ); ?>">
+		<div class="eqw-widget" data-eqw-cdn="<?php echo esc_attr( $s['cdn'] ); ?>" data-eqw-acc="<?php echo esc_attr( $s['acc'] ); ?>" data-eqw-core="<?php echo esc_attr( $configured ? self::core_url( $s ) : '' ); ?>" data-eqw-integrity="<?php echo esc_attr( $s['integrity'] ); ?>" data-eqw-sitekey="<?php echo esc_attr( $configured ? $s['sitekey'] : '' ); ?>">
 			<?php if ( '' !== $saved && isset( $saved_msgs[ $saved ] ) ) : ?>
 				<div class="notice notice-success inline eqw-wnotice"><p><?php echo esc_html( $saved_msgs[ $saved ] ); ?></p></div>
 			<?php endif; ?>
@@ -825,6 +1128,7 @@ class EQW_Widget {
 				} elseif ( $configured ) {
 					echo self::status_row( __( 'Site key', 'equalweb' ), '<code>' . esc_html( self::masked_key( $s['sitekey'] ) ) . '</code>' ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped parts.
 					echo self::status_row( __( 'Core version', 'equalweb' ), '<code>' . esc_html( $s['core_version'] ) . '</code>' . ( '' === $s['integrity'] ? ' <span class="eqw-badge eqw-warn">' . esc_html__( 'no integrity hash', 'equalweb' ) . '</span>' : '' ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped parts.
+					echo self::update_row( $s ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped parts.
 					if ( '' !== $s['for_domain'] ) {
 						$same = ( $s['for_domain'] === $host ) || ( 'www.' . $s['for_domain'] === $host ) || ( $s['for_domain'] === 'www.' . $host );
 						echo self::status_row( __( 'Code generated for', 'equalweb' ), '<code>' . esc_html( $s['for_domain'] ) . '</code>' . ( $same ? '' : ' <span class="eqw-badge eqw-warn">' . esc_html( sprintf( /* translators: %s: this site's host name */ __( 'this site is %s', 'equalweb' ), $host ) ) . '</span>' ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped parts.
@@ -849,7 +1153,7 @@ class EQW_Widget {
 					<?php endif; ?>
 				</form>
 				<div class="eqw-wcheck">
-					<button type="button" class="button" id="eqw-widget-check" <?php disabled( ! ( $s['enabled'] && ( $configured || 'legacy' === $s['mode'] ) ) ); ?>><?php esc_html_e( 'Check on your site', 'equalweb' ); ?></button>
+					<button type="button" class="button" id="eqw-widget-check" <?php disabled( ! ( $configured || 'legacy' === $s['mode'] ) ); ?>><?php esc_html_e( 'Check on your site', 'equalweb' ); ?></button>
 					<span class="eqw-wcheck-result" role="status">
 						<?php
 						if ( ! empty( $check['at'] ) ) {
@@ -857,9 +1161,12 @@ class EQW_Widget {
 								'ok'      => __( 'The widget is on your site.', 'equalweb' ),
 								'partial' => __( 'Only part of the widget was found on your site (a cache or another plugin may be in the way).', 'equalweb' ),
 								'missing' => __( 'The widget was not found on your site. A page cache may still serve old pages; purge it and check again.', 'equalweb' ),
-								'error'   => __( 'Your site could not be fetched.', 'equalweb' ),
+								'error'     => __( 'Your site could not be fetched.', 'equalweb' ),
+								'duplicate' => __( 'The widget loads more than once on your site. The code is probably also pasted in your theme or another plugin; remove it there so only this plugin installs it.', 'equalweb' ),
+								'still_on'  => __( 'The widget was removed here, but your site still shows it: purge your page cache, and check your theme or other plugins for a copy of the code.', 'equalweb' ),
+								'gone'      => __( 'The widget is not on your site.', 'equalweb' ),
 							);
-							$cls = 'ok' === $check['status'] ? 'eqw-ok' : ( 'error' === $check['status'] ? 'eqw-bad' : 'eqw-warn' );
+							$cls = in_array( $check['status'], array( 'ok', 'gone' ), true ) ? 'eqw-ok' : ( in_array( $check['status'], array( 'error', 'duplicate', 'still_on' ), true ) ? 'eqw-bad' : 'eqw-warn' );
 							echo '<span class="eqw-badge ' . esc_attr( $cls ) . '">' . esc_html( isset( $status_text[ $check['status'] ] ) ? $status_text[ $check['status'] ] : $check['status'] ) . '</span> ';
 							echo esc_html( sprintf( /* translators: %s: date and time */ __( 'Last checked %s.', 'equalweb' ), date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), (int) $check['at'] ) ) );
 							if ( ! empty( $check['detail'] ) && 'error' === $check['status'] ) {
@@ -887,7 +1194,7 @@ class EQW_Widget {
 			<div class="eqw-explain">
 				<h2><?php esc_html_e( 'Installation code', 'equalweb' ); ?></h2>
 				<p class="description">
-					<?php esc_html_e( 'In your EqualWeb account, open your website and copy the installation code. Each new core version comes with a new code, so paste it again when EqualWeb asks you to update.', 'equalweb' ); ?>
+					<?php esc_html_e( 'In your EqualWeb account, open your website and copy the installation code. Each new core version comes with a new code: with your EqualWeb API key saved in Settings, this tab shows a new version and updates it in one click; otherwise paste it again when EqualWeb asks you to update.', 'equalweb' ); ?>
 					<a href="<?php echo esc_url( EQW_Admin_Page::SIGNUP_URL ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'No account yet? Create one at EqualWeb', 'equalweb' ); ?><span class="screen-reader-text"> <?php esc_html_e( '(opens in a new tab)', 'equalweb' ); ?></span><?php echo EQW_Admin_Page::icon( 'external' ); // phpcs:ignore WordPress.Security.EscapeOutput -- plugin-built SVG. ?></a>
 				</p>
 				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">

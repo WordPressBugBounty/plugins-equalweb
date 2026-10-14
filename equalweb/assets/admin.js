@@ -1302,6 +1302,7 @@ jQuery( function ( $ ) {
 	}
 	var i18n = ( window.eqwPdf && eqwPdf.i18n ) || {};
 	var cdn = $tab.data( 'eqwCdn' ) || 'https://cdn.equalweb.com/';
+	var acc = $tab.data( 'eqwAcc' ) || 'https://access.equalweb.com/';
 	var coreUrl = $tab.data( 'eqwCore' ) || '';
 	var integrity = $tab.data( 'eqwIntegrity' ) || '';
 	var sitekey = String( $tab.data( 'eqwSitekey' ) || '' );
@@ -1318,7 +1319,7 @@ jQuery( function ( $ ) {
 	};
 	var scale = function ( v ) { var f = parseFloat( v ); return ( v !== '' && f >= 0.1 && f <= 3 ) ? String( f ) : ''; };
 	function config() {
-		var c = { sitekey: sitekey, domains: { js: cdn, acc: 'https://access.equalweb.com/' } };
+		var c = { sitekey: sitekey, domains: { js: cdn, acc: acc } };
 		var pos = val( 'position' ), lang = val( 'menulang' );
 		if ( pos ) { c.Position = pos; }
 		if ( lang ) { c.Menulang = lang; }
@@ -1438,9 +1439,12 @@ jQuery( function ( $ ) {
 					ok: i18n.widgetCheckOk || 'The widget is on your site.',
 					partial: i18n.widgetCheckPartial || 'Only part of the widget was found on your site.',
 					missing: i18n.widgetCheckMissing || 'The widget was not found on your site. Purge your page cache and check again.',
-					error: i18n.widgetCheckError || 'Your site could not be fetched.'
+					error: i18n.widgetCheckError || 'Your site could not be fetched.',
+					duplicate: i18n.widgetCheckDup || 'The widget loads more than once on your site.',
+					still_on: i18n.widgetCheckStillOn || 'The widget was removed here, but your site still shows it.',
+					gone: i18n.widgetCheckGone || 'The widget is not on your site.'
 				};
-				var cls = d.status === 'ok' ? 'eqw-ok' : ( d.status === 'error' ? 'eqw-bad' : 'eqw-warn' );
+				var cls = ( d.status === 'ok' || d.status === 'gone' ) ? 'eqw-ok' : ( ( d.status === 'error' || d.status === 'duplicate' || d.status === 'still_on' ) ? 'eqw-bad' : 'eqw-warn' );
 				$out.empty().append( $( '<span class="eqw-badge"/>' ).addClass( cls ).text( texts[ d.status ] || d.status || texts.error ) );
 				if ( d.status === 'error' && d.detail ) { $out.append( ' ' ).append( $( '<code/>' ).text( d.detail ) ); }
 			} )

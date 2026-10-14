@@ -2131,3 +2131,6 @@
 .eqw-wrap .eqw-widget .eqw-explain { padding: 14px 18px 14px; margin-bottom: 12px; }
 .eqw-wrap .eqw-widget .eqw-explain h2 { margin: 0 0 6px; font-size: 15px; }
 .eqw-wrap .eqw-widget .eqw-explain > .description { margin-top: 0; }
+
+/* Widget tab: the Update now / Check again button sits inside a status row. */
+.eqw-wupdate { display: inline-block; margin: 0 0 0 6px; vertical-align: middle; }

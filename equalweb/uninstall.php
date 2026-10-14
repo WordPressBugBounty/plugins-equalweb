@@ -33,6 +33,7 @@ function eqw_pdf_uninstall_site() {
 	delete_option( 'equalweb_enable' );
 	delete_option( 'equalweb_activation_redirect' );
 	delete_transient( 'eqw_widget_langs' );
+	delete_transient( 'eqw_widget_update' );
 	delete_option( 'eqw_pdf_api_key' );
 	delete_option( 'eqw_pdf_site_token' );
 	delete_option( 'eqw_pdf_register_error' );

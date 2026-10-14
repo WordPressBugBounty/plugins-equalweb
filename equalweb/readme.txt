@@ -4,7 +4,7 @@ Tags: accessibility checker, PDF, web accessibility, accessibility widget, AI-po
 Requires at least: 5.8
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 3.0.0
+Stable tag: 3.0.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -152,6 +152,12 @@ The plugin page explains the reason and what to do. Free checks need a site that
 
 == Changelog ==
 
+= 3.0.1 =
+* New: with your EqualWeb API key saved in Settings, the widget tab checks for new widget versions and updates in one click (your button design is kept). Without a key, the tab tells you how to turn it on.
+* The welcome-offer banners are no longer shown once an API key is saved.
+* Fix: installation codes from Nagich accounts (nagich.co.il, nagich.com) are accepted, and the widget keeps loading from the domains your code names. Sites where 3.0.0 could not read such a code are repaired automatically.
+* "Check on your site" now warns when the widget loads more than once (the code is also in your theme or another plugin), and after removing the widget, tells you if your site still shows it.
+
 = 3.0.0 =
 * This listing now carries the full EqualWeb PDF accessibility toolkit: the free PDF/UA checker with scores and reports, AI remediation, bulk actions, analytics, classification and role-based permissions. PDF checks register the site only when a PDF tab is opened.
 * The accessibility widget, rebuilt: paste the installation code from your EqualWeb account and the plugin loads the widget properly on every page (deferred, with its integrity hash) instead of printing raw code.
@@ -182,6 +188,9 @@ The plugin page explains the reason and what to do. Free checks need a site that
 * Embedded the EqualWeb widget code from a settings page.
 
 == Upgrade Notice ==
+
+= 3.0.1 =
+One-click widget updates with your EqualWeb API key; fixes widget codes from Nagich accounts and warns about a widget installed twice.
 
 = 3.0.0 =
 Adds the free PDF accessibility checker and AI remediation; the widget gets a button designer and loads securely, with your 1.x settings imported automatically. Requires PHP 7.4.

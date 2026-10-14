@@ -3,7 +3,7 @@
  * Plugin Name:       EqualWeb Accessibility
  * Plugin URI:        https://wordpress.org/plugins/equalweb/
  * Description:       The EqualWeb accessibility widget on your site, with the button designed from WordPress, plus a free PDF accessibility checker and AI remediation for your documents.
- * Version:           3.0.0
+ * Version:           3.0.1
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            EqualWeb
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'EQW_PDF_VERSION', '3.0.0' );
+define( 'EQW_PDF_VERSION', '3.0.1' );
 define( 'EQW_PDF_FILE', __FILE__ );
 define( 'EQW_PDF_DIR', plugin_dir_path( __FILE__ ) );
 define( 'EQW_PDF_URL', plugin_dir_url( __FILE__ ) );
